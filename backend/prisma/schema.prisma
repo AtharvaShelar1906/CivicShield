@@ -1,0 +1,165 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// ---------------------------------------------------------
+// ENUMS
+// ---------------------------------------------------------
+
+enum UserRole {
+  CITIZEN
+  AUTHORITY
+  ADMIN
+}
+
+enum GrievanceStatus {
+  SUBMITTED
+  UNDER_REVIEW
+  ASSIGNED
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+  REJECTED
+}
+
+enum Priority {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+// ---------------------------------------------------------
+// CORE MODELS
+// ---------------------------------------------------------
+
+model User {
+  id           String    @id @default(uuid())
+  name         String
+  email        String    @unique
+  passwordHash String
+  role         UserRole  @default(CITIZEN)
+  department   String?
+  isActive     Boolean   @default(true)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  // Relations
+  submittedGrievances Grievance[] @relation("SubmittedGrievances")
+  assignedGrievances  Grievance[] @relation("AssignedGrievances")
+  auditLogs           AuditLog[]
+
+  @@index([email])
+  @@index([role])
+  @@index([createdAt])
+}
+
+model Category {
+  id          String      @id @default(uuid())
+  name        String      @unique
+  description String?
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  // Relations
+  grievances  Grievance[]
+
+  @@index([name])
+}
+
+model Grievance {
+  id            String          @id @default(uuid())
+  title         String
+  description   String
+  location      String?
+  status        GrievanceStatus @default(SUBMITTED)
+  priority      Priority        @default(MEDIUM)
+  
+  // Official category relation (authoritative, assigned during triage)
+  categoryId    String?
+  category      Category?       @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+
+  // Submitter relation
+  submittedById String
+  submittedBy   User            @relation("SubmittedGrievances", fields: [submittedById], references: [id], onDelete: Cascade)
+
+  // Assigned authority relation (optional)
+  assignedToId  String?
+  assignedTo    User?           @relation("AssignedGrievances", fields: [assignedToId], references: [id], onDelete: SetNull)
+
+  // Separate AI / NLP Analysis relation
+  analysis      GrievanceAnalysis?
+
+  // Duplicate / Similarity graph relations
+  similarAsSource GrievanceSimilarity[] @relation("SourceSimilarities")
+  similarAsTarget GrievanceSimilarity[] @relation("TargetSimilarities")
+
+  resolvedAt    DateTime?
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  @@index([status])
+  @@index([priority])
+  @@index([categoryId])
+  @@index([submittedById])
+  @@index([assignedToId])
+  @@index([createdAt])
+}
+
+model GrievanceAnalysis {
+  id                 String    @id @default(uuid())
+  grievanceId        String    @unique
+  grievance          Grievance @relation(fields: [grievanceId], references: [id], onDelete: Cascade)
+
+  // AI predictions (advisory, reviewed/overridden by authorities)
+  predictedCategory  String
+  categoryConfidence Float
+  severityScore      Float
+  predictedPriority  Priority
+  isAnomalous        Boolean   @default(false)
+  anomalyReason      String?
+  modelVersion       String
+  createdAt          DateTime  @default(now())
+
+  @@index([predictedPriority])
+  @@index([isAnomalous])
+  @@index([createdAt])
+}
+
+model GrievanceSimilarity {
+  id                String    @id @default(uuid())
+  sourceGrievanceId String
+  sourceGrievance   Grievance @relation("SourceSimilarities", fields: [sourceGrievanceId], references: [id], onDelete: Cascade)
+  targetGrievanceId String
+  targetGrievance   Grievance @relation("TargetSimilarities", fields: [targetGrievanceId], references: [id], onDelete: Cascade)
+  similarityScore   Float
+  createdAt         DateTime  @default(now())
+
+  @@unique([sourceGrievanceId, targetGrievanceId])
+  @@index([sourceGrievanceId])
+  @@index([targetGrievanceId])
+  @@index([similarityScore])
+}
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  userId     String?
+  user       User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  action     String
+  entityType String
+  entityId   String?
+  details    Json?
+  ipAddress  String?
+  createdAt  DateTime @default(now())
+
+  @@index([userId])
+  @@index([action])
+  @@index([entityType])
+  @@index([entityId])
+  @@index([createdAt])
+}
